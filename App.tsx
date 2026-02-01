@@ -14,6 +14,7 @@ const App: React.FC = () => {
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentEffect, setCurrentEffect] = useState<EffectType>('blur');
+  const [currentIntensity, setCurrentIntensity] = useState<number>(25); // 기본 강도 설정
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -66,6 +67,7 @@ const App: React.FC = () => {
         height: det.box.height,
         isAuto: true,
         effectType: currentEffect,
+        intensity: currentIntensity,
       }));
 
       setRegions(newRegions);
@@ -78,9 +80,19 @@ const App: React.FC = () => {
 
   const handleEffectChange = (effect: EffectType) => {
     setCurrentEffect(effect);
+    // 효과 변경 시 기존 강도 유지하며 타입만 변경
     setRegions(prev => prev.map(region => ({
       ...region,
       effectType: effect
+    })));
+  };
+
+  const handleIntensityChange = (intensity: number) => {
+    setCurrentIntensity(intensity);
+    // 모든 영역의 강도를 일괄적으로 변경
+    setRegions(prev => prev.map(region => ({
+      ...region,
+      intensity: intensity
     })));
   };
 
@@ -99,6 +111,7 @@ const App: React.FC = () => {
   const reset = () => {
     setImage(null);
     setRegions([]);
+    setCurrentIntensity(25);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -129,7 +142,6 @@ const App: React.FC = () => {
               />
             </div>
 
-            {/* 안내 메시지 추가 */}
             <div className="bg-gray-50 border border-gray-100 rounded-3xl p-8 shadow-sm">
               <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
                 <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -184,6 +196,8 @@ const App: React.FC = () => {
               onUpdateRegion={updateRegion}
               currentEffect={currentEffect}
               setCurrentEffect={handleEffectChange}
+              currentIntensity={currentIntensity}
+              setCurrentIntensity={handleIntensityChange}
             />
           </div>
         )}

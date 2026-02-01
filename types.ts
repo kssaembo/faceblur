@@ -9,6 +9,7 @@ export interface BlurRegion {
   height: number;
   isAuto: boolean;
   effectType: EffectType;
+  intensity: number; // 효과 강도 (블러 반경 또는 모자이크 크기)
 }
 
 export interface Point {

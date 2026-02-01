@@ -1,5 +1,5 @@
 
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { BlurRegion, Point, EffectType } from '../types';
 
 interface EditorProps {
@@ -10,6 +10,8 @@ interface EditorProps {
   onUpdateRegion: (region: BlurRegion) => void;
   currentEffect: EffectType;
   setCurrentEffect: (effect: EffectType) => void;
+  currentIntensity: number;
+  setCurrentIntensity: (intensity: number) => void;
 }
 
 const Editor: React.FC<EditorProps> = ({ 
@@ -19,10 +21,17 @@ const Editor: React.FC<EditorProps> = ({
   onRemoveRegion, 
   onUpdateRegion,
   currentEffect, 
-  setCurrentEffect 
+  setCurrentEffect,
+  currentIntensity,
+  setCurrentIntensity
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  
+  // 성능 최적화를 위한 오프스크린 캔버스 캐시
+  const blurLayerRef = useRef<HTMLCanvasElement | null>(null);
+  const mosaicLayerRef = useRef<HTMLCanvasElement | null>(null);
+
   const [isAddingMode, setIsAddingMode] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -31,55 +40,85 @@ const Editor: React.FC<EditorProps> = ({
   const [startPoint, setStartPoint] = useState<Point | null>(null);
   const [currentRect, setCurrentRect] = useState<Partial<BlurRegion> | null>(null);
 
-  // 저장 관련 상태
+  // 로컬 상태 추가 (성능 최적화용)
+  const [localIntensity, setLocalIntensity] = useState(currentIntensity);
+  const [localDragPos, setLocalDragPos] = useState<Point | null>(null);
+
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isConfirmed, setIsConfirmed] = useState(false);
 
-  const drawMosaic = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, size: number = 20) => {
-    ctx.save();
-    ctx.beginPath();
-    ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
-    ctx.clip();
+  // 부모로부터 온 강도 값이 변경되면 로컬 상태 동기화
+  useEffect(() => {
+    setLocalIntensity(currentIntensity);
+  }, [currentIntensity]);
 
-    const offCanvas = document.createElement('canvas');
-    const offCtx = offCanvas.getContext('2d')!;
-    offCanvas.width = Math.max(1, Math.round(w / size));
-    offCanvas.height = Math.max(1, Math.round(h / size));
-    
-    offCtx.drawImage(image, x, y, w, h, 0, 0, offCanvas.width, offCanvas.height);
-    
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(offCanvas, 0, 0, offCanvas.width, offCanvas.height, x, y, w, h);
-    ctx.restore();
-  };
+  // 슬라이더 디바운싱: 로컬 값이 변경되고 200ms 후 부모 상태 업데이트
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      if (localIntensity !== currentIntensity) {
+        setCurrentIntensity(localIntensity);
+      }
+    }, 200);
+    return () => clearTimeout(handler);
+  }, [localIntensity, currentIntensity, setCurrentIntensity]);
 
-  const drawBlur = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) => {
-    ctx.save();
-    ctx.beginPath();
-    ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
-    ctx.clip();
-    
-    ctx.filter = 'blur(25px)';
-    ctx.drawImage(image, 0, 0);
-    ctx.restore();
-  };
+  // 효과 레이어 미리 렌더링 (강도 변경 시에만 업데이트됨)
+  useEffect(() => {
+    if (!image) return;
+
+    // 블러 레이어 생성
+    const bCanvas = document.createElement('canvas');
+    bCanvas.width = image.naturalWidth;
+    bCanvas.height = image.naturalHeight;
+    const bCtx = bCanvas.getContext('2d')!;
+    bCtx.filter = `blur(${currentIntensity}px)`;
+    bCtx.drawImage(image, 0, 0);
+    blurLayerRef.current = bCanvas;
+
+    // 모자이크 레이어 생성
+    const mCanvas = document.createElement('canvas');
+    mCanvas.width = image.naturalWidth;
+    mCanvas.height = image.naturalHeight;
+    const mCtx = mCanvas.getContext('2d')!;
+    const size = Math.max(2, currentIntensity);
+    const w = Math.ceil(image.naturalWidth / size);
+    const h = Math.ceil(image.naturalHeight / size);
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = w;
+    tempCanvas.height = h;
+    const tCtx = tempCanvas.getContext('2d')!;
+    tCtx.drawImage(image, 0, 0, w, h);
+    mCtx.imageSmoothingEnabled = false;
+    mCtx.drawImage(tempCanvas, 0, 0, w, h, 0, 0, image.naturalWidth, image.naturalHeight);
+    mosaicLayerRef.current = mCanvas;
+
+    renderCanvas();
+  }, [image, currentIntensity]);
 
   const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || !image) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     canvas.width = image.naturalWidth;
     canvas.height = image.naturalHeight;
+    
+    // 1. 원본 이미지 그리기
     ctx.drawImage(image, 0, 0);
 
+    // 2. 가림 영역 그리기
     regions.forEach(region => {
       const { x, y, width, height, effectType } = region;
-      if (effectType === 'mosaic') {
-        drawMosaic(ctx, Math.round(x), Math.round(y), Math.round(width), Math.round(height));
-      } else {
-        drawBlur(ctx, Math.round(x), Math.round(y), Math.round(width), Math.round(height));
+      const layer = effectType === 'mosaic' ? mosaicLayerRef.current : blurLayerRef.current;
+      
+      if (layer) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.ellipse(x + width / 2, y + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(layer, 0, 0);
+        ctx.restore();
       }
     });
   }, [image, regions]);
@@ -101,7 +140,6 @@ const Editor: React.FC<EditorProps> = ({
 
   const handleMouseDown = (e: React.MouseEvent) => {
     const point = getCanvasCoords(e);
-
     const target = e.target as HTMLElement;
     const regionId = target.closest('[data-region-id]')?.getAttribute('data-region-id');
     
@@ -115,6 +153,7 @@ const Editor: React.FC<EditorProps> = ({
           x: point.x - region.x,
           y: point.y - region.y
         });
+        setLocalDragPos({ x: region.x, y: region.y });
         return;
       }
     }
@@ -128,14 +167,11 @@ const Editor: React.FC<EditorProps> = ({
     const current = getCanvasCoords(e);
 
     if (isDragging && draggingId) {
-      const region = regions.find(r => r.id === draggingId);
-      if (region) {
-        onUpdateRegion({
-          ...region,
-          x: current.x - dragOffset.x,
-          y: current.y - dragOffset.y
-        });
-      }
+      // 드래그 중에는 부모 상태(regions)를 업데이트하지 않고 로컬 위치만 변경 (딜레이 제거)
+      setLocalDragPos({
+        x: current.x - dragOffset.x,
+        y: current.y - dragOffset.y
+      });
       return;
     }
 
@@ -148,10 +184,21 @@ const Editor: React.FC<EditorProps> = ({
   };
 
   const handleMouseUp = () => {
-    if (isDragging) {
-      setIsDragging(false);
-      setDraggingId(null);
+    if (isDragging && draggingId && localDragPos) {
+      const region = regions.find(r => r.id === draggingId);
+      if (region) {
+        // 마우스를 뗄 때만 부모 상태 업데이트 (지연 렌더링 적용)
+        onUpdateRegion({
+          ...region,
+          x: localDragPos.x,
+          y: localDragPos.y
+        });
+      }
     }
+    
+    setIsDragging(false);
+    setDraggingId(null);
+    setLocalDragPos(null);
 
     if (isDrawing && currentRect && currentRect.width! > 5 && currentRect.height! > 5) {
       onAddRegion({
@@ -161,7 +208,8 @@ const Editor: React.FC<EditorProps> = ({
         width: currentRect.width!,
         height: currentRect.height!,
         isAuto: false,
-        effectType: currentEffect
+        effectType: currentEffect,
+        intensity: currentIntensity
       });
       setIsAddingMode(false);
     }
@@ -172,15 +220,12 @@ const Editor: React.FC<EditorProps> = ({
 
   const handleDownload = () => {
     if (!isConfirmed) return;
-    
     const canvas = canvasRef.current;
     if (!canvas) return;
     const link = document.createElement('a');
     link.download = `student-privacy-blur-${Date.now()}.png`;
     link.href = canvas.toDataURL('image/png');
     link.click();
-    
-    // 모달 닫기 및 상태 초기화
     setIsSaveModalOpen(false);
     setIsConfirmed(false);
   };
@@ -208,17 +253,23 @@ const Editor: React.FC<EditorProps> = ({
             const offsetX = canvasRect.left - overlayRect.left;
             const offsetY = canvasRect.top - overlayRect.top;
 
+            // 드래그 중인 영역은 로컬 좌표를 사용, 나머지는 원래 좌표 사용
+            const isThisBeingDragged = draggingId === region.id && localDragPos;
+            const displayX = isThisBeingDragged ? localDragPos!.x : region.x;
+            const displayY = isThisBeingDragged ? localDragPos!.y : region.y;
+
             return (
               <div 
                 key={region.id}
                 data-region-id={region.id}
                 className={`absolute border-2 border-dashed ${region.effectType === 'mosaic' ? 'border-orange-400' : 'border-blue-400'} bg-white/5 group ${isAddingMode ? 'pointer-events-none' : 'cursor-grab active:cursor-grabbing'}`}
                 style={{
-                  left: region.x * scaleX + offsetX,
-                  top: region.y * scaleY + offsetY,
+                  left: displayX * scaleX + offsetX,
+                  top: displayY * scaleY + offsetY,
                   width: region.width * scaleX,
                   height: region.height * scaleY,
-                  borderRadius: '50%'
+                  borderRadius: '50%',
+                  zIndex: isThisBeingDragged ? 50 : 10
                 }}
               >
                 <button 
@@ -272,7 +323,7 @@ const Editor: React.FC<EditorProps> = ({
         <div className="bg-white p-6 rounded-2xl shadow-md border border-gray-100 space-y-6">
           <div>
             <label className="block text-sm font-bold text-gray-700 mb-3 uppercase tracking-wider">가리기 방식</label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2 mb-4">
               <button 
                 onClick={() => setCurrentEffect('blur')}
                 className={`py-3 px-2 rounded-xl text-sm font-bold transition-all border-2 ${currentEffect === 'blur' ? 'bg-blue-600 text-white border-blue-600 shadow-lg shadow-blue-100' : 'bg-gray-50 text-gray-500 border-transparent hover:bg-gray-100'}`}
@@ -285,6 +336,23 @@ const Editor: React.FC<EditorProps> = ({
               >
                 모자이크
               </button>
+            </div>
+
+            {/* 강도 조절 슬라이더 (로컬 상태 사용) */}
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-bold text-gray-500">효과 강도</span>
+                <span className="text-xs font-bold text-blue-600">{localIntensity}</span>
+              </div>
+              <input 
+                type="range" 
+                min="5" 
+                max="80" 
+                step="1"
+                value={localIntensity}
+                onChange={(e) => setLocalIntensity(Number(e.target.value))}
+                className="w-full h-2 bg-gray-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
+              />
             </div>
           </div>
 
@@ -321,7 +389,6 @@ const Editor: React.FC<EditorProps> = ({
         </button>
       </div>
 
-      {/* 저장 전 주의사항 모달 */}
       {isSaveModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[300] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-8 shadow-2xl animate-in fade-in zoom-in duration-200">

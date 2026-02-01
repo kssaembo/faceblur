@@ -13,7 +13,7 @@ const Header: React.FC = () => {
           </div>
           <div>
             <h1 className="text-xl font-bold text-gray-900 tracking-tight">쉽고 간단하게 얼수(얼굴수정)</h1>
-            <p className="text-[10px] text-blue-600 uppercase font-bold tracking-widest">학생 사진 얼굴 쉽게 가리기</p>
+            <p className="text-[15px] text-blue-600 uppercase font-bold tracking-widest">학생 사진 얼굴 쉽게 가리기</p>
           </div>
         </div>
       </div>
