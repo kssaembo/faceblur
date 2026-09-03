@@ -22,3 +22,15 @@ export interface ImageFileInfo {
   type: string;
   size: number;
 }
+
+export interface QueueItem {
+  id: string;
+  fileInfo: ImageFileInfo;
+  image: HTMLImageElement;
+  previewUrl: string;
+  regions: BlurRegion[];
+  isAiProcessed: boolean;
+  isAiProcessing?: boolean;
+  effectType: EffectType;
+  intensity: number;
+}

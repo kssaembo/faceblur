@@ -13,6 +13,9 @@ interface EditorProps {
   setCurrentEffect: (effect: EffectType) => void;
   currentIntensity: number;
   setCurrentIntensity: (intensity: number) => void;
+  totalQueueCount?: number;
+  onOpenBatchZipModal?: () => void;
+  isAiProcessing?: boolean;
 }
 
 const formatBytes = (bytes: number): string => {
@@ -33,7 +36,10 @@ const Editor: React.FC<EditorProps> = ({
   currentEffect, 
   setCurrentEffect,
   currentIntensity,
-  setCurrentIntensity
+  setCurrentIntensity,
+  totalQueueCount = 1,
+  onOpenBatchZipModal,
+  isAiProcessing = false
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -346,61 +352,43 @@ const Editor: React.FC<EditorProps> = ({
 
   return (
     <div className="flex flex-col lg:flex-row gap-8 w-full max-w-7xl items-start pb-12">
-      <div className="flex-grow relative bg-white shadow-xl rounded-2xl overflow-hidden border border-gray-100">
-        <canvas ref={canvasRef} className="max-h-[75vh] w-auto mx-auto block" />
-
+      {/* 사진 작업대 영역 (배경과 자연스럽고 세련되게 구분되는 독립 스테이지) */}
+      <div className="flex-grow relative bg-gradient-to-b from-slate-50/90 via-slate-50 to-slate-100/80 rounded-3xl overflow-hidden border border-slate-200/90 shadow-[0_16px_36px_-12px_rgba(15,23,42,0.09),0_4px_12px_-2px_rgba(15,23,42,0.04)] ring-1 ring-slate-900/[0.04] min-h-[520px] lg:min-h-[640px] flex items-center justify-center p-6 sm:p-10 transition-all">
+        {/* 아주 은은한 도트 매트릭스 그리드 (디자인 세련미 부여 및 투명 영역 가시성 확보) */}
         <div 
-          ref={overlayRef}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          className={`absolute inset-0 ${isAddingMode ? 'cursor-crosshair' : isDragging ? 'cursor-grabbing' : 'cursor-default'} overflow-hidden`}
-        >
-          {regions.map((region) => {
-            const canvasRect = canvasRef.current?.getBoundingClientRect();
-            const overlayRect = overlayRef.current?.getBoundingClientRect();
-            if (!canvasRect || !overlayRect) return null;
-            
-            const scaleX = canvasRect.width / image.naturalWidth;
-            const scaleY = canvasRect.height / image.naturalHeight;
-            const offsetX = canvasRect.left - overlayRect.left;
-            const offsetY = canvasRect.top - overlayRect.top;
+          className="absolute inset-0 opacity-[0.035] pointer-events-none"
+          style={{
+            backgroundImage: `radial-gradient(#0f172a 1px, transparent 1px)`,
+            backgroundSize: '16px 16px'
+          }}
+        />
 
-            // 드래그 중인 영역은 로컬 좌표를 사용, 나머지는 원래 좌표 사용
-            const isThisBeingDragged = draggingId === region.id && localDragPos;
-            const displayX = isThisBeingDragged ? localDragPos!.x : region.x;
-            const displayY = isThisBeingDragged ? localDragPos!.y : region.y;
+        {isAiProcessing && (
+          <div className="absolute top-5 left-5 z-40 bg-white/95 backdrop-blur-md text-slate-800 text-xs font-bold px-3.5 py-2 rounded-full flex items-center gap-2.5 shadow-md border border-blue-200 animate-pulse">
+            <svg className="animate-spin w-3.5 h-3.5 text-blue-600" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+            </svg>
+            <span className="tracking-wide text-slate-700">AI 얼굴 탐색 중...</span>
+          </div>
+        )}
 
-            return (
-              <div 
-                key={region.id}
-                data-region-id={region.id}
-                className={`absolute border-2 border-dashed ${region.effectType === 'mosaic' ? 'border-orange-400' : 'border-blue-400'} bg-white/5 group ${isAddingMode ? 'pointer-events-none' : 'cursor-grab active:cursor-grabbing'}`}
-                style={{
-                  left: displayX * scaleX + offsetX,
-                  top: displayY * scaleY + offsetY,
-                  width: region.width * scaleX,
-                  height: region.height * scaleY,
-                  borderRadius: '50%',
-                  zIndex: isThisBeingDragged ? 50 : 10
-                }}
-              >
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRemoveRegion(region.id);
-                  }}
-                  className="delete-btn absolute -top-3 -right-3 w-7 h-7 bg-red-500 text-white rounded-full flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 active:scale-90"
-                >
-                  ✕
-                </button>
-              </div>
-            );
-          })}
+        {/* 캔버스와 오버레이를 감싸며 작업대 위에 얹힌 세련된 사진 마운트 프레임 */}
+        <div className="relative inline-flex items-center justify-center bg-white p-2 sm:p-2.5 rounded-2xl shadow-[0_12px_32px_-8px_rgba(15,23,42,0.12),0_4px_12px_-2px_rgba(15,23,42,0.05)] border border-slate-200/80 transition-all">
+          <canvas 
+            ref={canvasRef} 
+            className="max-h-[62vh] max-w-full w-auto h-auto block select-none rounded-xl overflow-hidden" 
+          />
 
-          {currentRect && (
-            (() => {
+          <div 
+            ref={overlayRef}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            className={`absolute inset-2 sm:inset-2.5 ${isAddingMode ? 'cursor-crosshair' : isDragging ? 'cursor-grabbing' : 'cursor-default'} overflow-hidden select-none rounded-xl`}
+          >
+            {regions.map((region) => {
               const canvasRect = canvasRef.current?.getBoundingClientRect();
               const overlayRect = overlayRef.current?.getBoundingClientRect();
               if (!canvasRect || !overlayRect) return null;
@@ -410,26 +398,71 @@ const Editor: React.FC<EditorProps> = ({
               const offsetX = canvasRect.left - overlayRect.left;
               const offsetY = canvasRect.top - overlayRect.top;
 
+              // 드래그 중인 영역은 로컬 좌표를 사용, 나머지는 원래 좌표 사용
+              const isThisBeingDragged = draggingId === region.id && localDragPos;
+              const displayX = isThisBeingDragged ? localDragPos!.x : region.x;
+              const displayY = isThisBeingDragged ? localDragPos!.y : region.y;
+
               return (
                 <div 
-                  className="absolute border-2 border-dashed border-white bg-blue-500/20"
+                  key={region.id}
+                  data-region-id={region.id}
+                  className={`absolute border-2 border-dashed ${region.effectType === 'mosaic' ? 'border-amber-500 ring-2 ring-amber-500/20' : 'border-blue-500 ring-2 ring-blue-500/20'} bg-blue-500/10 group ${isAddingMode ? 'pointer-events-none' : 'cursor-grab active:cursor-grabbing'}`}
                   style={{
-                    left: currentRect.x! * scaleX + offsetX,
-                    top: currentRect.y! * scaleY + offsetY,
-                    width: currentRect.width! * scaleX,
-                    height: currentRect.height! * scaleY,
-                    borderRadius: '50%'
+                    left: displayX * scaleX + offsetX,
+                    top: displayY * scaleY + offsetY,
+                    width: region.width * scaleX,
+                    height: region.height * scaleY,
+                    borderRadius: '50%',
+                    zIndex: isThisBeingDragged ? 50 : 10
                   }}
-                />
+                >
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveRegion(region.id);
+                    }}
+                    className="delete-btn absolute -top-3 -right-3 w-7 h-7 bg-red-500 text-white rounded-full flex items-center justify-center shadow-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 active:scale-90"
+                    title="가림 영역 삭제"
+                  >
+                    ✕
+                  </button>
+                </div>
               );
-            })()
-          )}
-          
-          {isAddingMode && !isDrawing && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/60 text-white text-sm font-bold rounded-full backdrop-blur-md">
-              이미지 위를 드래그하여 원을 그리세요
-            </div>
-          )}
+            })}
+
+            {currentRect && (
+              (() => {
+                const canvasRect = canvasRef.current?.getBoundingClientRect();
+                const overlayRect = overlayRef.current?.getBoundingClientRect();
+                if (!canvasRect || !overlayRect) return null;
+                
+                const scaleX = canvasRect.width / image.naturalWidth;
+                const scaleY = canvasRect.height / image.naturalHeight;
+                const offsetX = canvasRect.left - overlayRect.left;
+                const offsetY = canvasRect.top - overlayRect.top;
+
+                return (
+                  <div 
+                    className="absolute border-2 border-dashed border-blue-600 bg-blue-500/20 ring-2 ring-blue-400/40"
+                    style={{
+                      left: currentRect.x! * scaleX + offsetX,
+                      top: currentRect.y! * scaleY + offsetY,
+                      width: currentRect.width! * scaleX,
+                      height: currentRect.height! * scaleY,
+                      borderRadius: '50%'
+                    }}
+                  />
+                );
+              })()
+            )}
+            
+            {isAddingMode && !isDrawing && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-slate-900/85 text-white text-xs font-bold rounded-full backdrop-blur-md shadow-lg border border-white/20">
+                이미지 위를 드래그하여 원을 그리세요
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -492,16 +525,38 @@ const Editor: React.FC<EditorProps> = ({
           </div>
         </div>
 
+        {totalQueueCount > 1 && onOpenBatchZipModal && (
+          <button 
+            type="button"
+            onClick={onOpenBatchZipModal}
+            className="w-full flex items-center justify-center gap-2.5 py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 group"
+          >
+            <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+            </svg>
+            <span className="text-sm">전체 일괄 다운로드 (ZIP)</span>
+            <span className="text-xs bg-blue-800/60 px-2 py-0.5 rounded-full font-semibold">
+              {totalQueueCount}장
+            </span>
+          </button>
+        )}
+
         <button 
           onClick={() => setIsSaveModalOpen(true)}
-          className="w-full flex items-center justify-center gap-3 py-4 bg-green-600 text-white rounded-2xl font-bold shadow-lg shadow-green-100 hover:bg-green-700 transition-all active:scale-95 group"
+          className={`w-full flex items-center justify-center gap-3 py-3.5 ${
+            totalQueueCount > 1 
+              ? 'bg-white border-2 border-green-600 text-green-700 hover:bg-green-50 shadow-sm' 
+              : 'bg-green-600 text-white hover:bg-green-700 shadow-lg shadow-green-100'
+          } rounded-2xl font-bold transition-all active:scale-95 group`}
         >
-          <svg className="w-6 h-6 group-hover:bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-5 h-5 group-hover:bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
-          <span className="text-base">저장하기</span>
-          <span className="text-xs bg-green-700/60 px-2.5 py-0.5 rounded-full font-medium">
-            {effectiveExt.toUpperCase()} · 원본용량 유지
+          <span className="text-sm">{totalQueueCount > 1 ? '현재 사진만 저장' : '저장하기'}</span>
+          <span className={`text-xs ${
+            totalQueueCount > 1 ? 'bg-green-100 text-green-800' : 'bg-green-700/60 text-white'
+          } px-2 py-0.5 rounded-full font-medium`}>
+            {effectiveExt.toUpperCase()}
           </span>
         </button>
       </div>
