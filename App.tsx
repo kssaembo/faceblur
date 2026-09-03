@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { BlurRegion, EffectType } from './types';
+import { BlurRegion, EffectType, ImageFileInfo } from './types';
 import Editor from './components/Editor';
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -10,6 +10,7 @@ declare const faceapi: any;
 
 const App: React.FC = () => {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
+  const [fileInfo, setFileInfo] = useState<ImageFileInfo | null>(null);
   const [regions, setRegions] = useState<BlurRegion[]>([]);
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -36,6 +37,12 @@ const App: React.FC = () => {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    setFileInfo({
+      name: file.name,
+      type: file.type,
+      size: file.size,
+    });
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -110,6 +117,7 @@ const App: React.FC = () => {
 
   const reset = () => {
     setImage(null);
+    setFileInfo(null);
     setRegions([]);
     setCurrentIntensity(25);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -190,9 +198,10 @@ const App: React.FC = () => {
 
             <Editor 
               image={image} 
+              fileInfo={fileInfo}
               regions={regions} 
               onAddRegion={addManualRegion} 
-              onRemoveRegion={removeRegion}
+              onRemoveRegion={removeRegion} 
               onUpdateRegion={updateRegion}
               currentEffect={currentEffect}
               setCurrentEffect={handleEffectChange}

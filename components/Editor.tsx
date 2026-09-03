@@ -1,9 +1,10 @@
 
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { BlurRegion, Point, EffectType } from '../types';
+import { BlurRegion, Point, EffectType, ImageFileInfo } from '../types';
 
 interface EditorProps {
   image: HTMLImageElement;
+  fileInfo?: ImageFileInfo | null;
   regions: BlurRegion[];
   onAddRegion: (region: BlurRegion) => void;
   onRemoveRegion: (id: string) => void;
@@ -14,8 +15,17 @@ interface EditorProps {
   setCurrentIntensity: (intensity: number) => void;
 }
 
+const formatBytes = (bytes: number): string => {
+  if (!bytes || bytes <= 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+};
+
 const Editor: React.FC<EditorProps> = ({ 
   image, 
+  fileInfo,
   regions, 
   onAddRegion, 
   onRemoveRegion, 
@@ -46,6 +56,34 @@ const Editor: React.FC<EditorProps> = ({
 
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isConfirmed, setIsConfirmed] = useState(false);
+
+  // 원본 포맷 감지 및 용량 최적화 상태
+  const isOriginalPng = useMemo(() => {
+    return fileInfo?.type === 'image/png' || /\.png$/i.test(fileInfo?.name || '');
+  }, [fileInfo]);
+
+  const isOriginalWebp = useMemo(() => {
+    return fileInfo?.type === 'image/webp' || /\.webp$/i.test(fileInfo?.name || '');
+  }, [fileInfo]);
+
+  const originalFormatKey = useMemo<'jpeg' | 'png' | 'webp'>(() => {
+    if (isOriginalPng) return 'png';
+    if (isOriginalWebp) return 'webp';
+    return 'jpeg';
+  }, [isOriginalPng, isOriginalWebp]);
+
+  const [selectedFormat, setSelectedFormat] = useState<'original' | 'jpeg' | 'png' | 'webp'>('original');
+  const [optimizedBlob, setOptimizedBlob] = useState<Blob | null>(null);
+  const [estimatedSize, setEstimatedSize] = useState<number | null>(null);
+  const [isGeneratingBlob, setIsGeneratingBlob] = useState(false);
+
+  const effectiveFormat = selectedFormat === 'original' ? originalFormatKey : selectedFormat;
+  const effectiveMimeType = effectiveFormat === 'png' 
+    ? 'image/png' 
+    : effectiveFormat === 'webp' 
+      ? 'image/webp' 
+      : 'image/jpeg';
+  const effectiveExt = effectiveFormat === 'jpeg' ? 'jpg' : effectiveFormat;
 
   // 부모로부터 온 강도 값이 변경되면 로컬 상태 동기화
   useEffect(() => {
@@ -218,14 +256,90 @@ const Editor: React.FC<EditorProps> = ({
     setCurrentRect(null);
   };
 
-  const handleDownload = () => {
+  // 최적화된 Blob 생성 로직 (원본 용량과 유사하게 자동 매칭)
+  const generateOptimizedBlob = useCallback(async (
+    canvas: HTMLCanvasElement, 
+    mimeType: string, 
+    targetSize?: number
+  ): Promise<Blob | null> => {
+    if (mimeType === 'image/png') {
+      return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    }
+
+    // JPEG 또는 WebP의 경우:
+    // 1차 시도: 기본 고화질 (0.92)
+    const q = 0.92;
+    let blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, q));
+
+    // 원본 파일 크기가 있고, 생성된 파일이 원본보다 15% 이상 커진 경우
+    // 시각적 손실이 거의 없는 범위(0.85 ~ 0.92) 내에서 원본 용량과 유사하게 미세 조정
+    if (blob && targetSize && targetSize > 0 && blob.size > targetSize * 1.15) {
+      const ratio = targetSize / blob.size;
+      const adjustedQuality = Math.max(0.85, Math.min(0.92, q * Math.sqrt(ratio)));
+      const refinedBlob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, adjustedQuality));
+      if (refinedBlob) {
+        blob = refinedBlob;
+      }
+    }
+
+    return blob;
+  }, []);
+
+  // 모달이 열리거나 포맷이 변경될 때 저장용 Blob 사전 생성 및 크기 계산
+  useEffect(() => {
+    if (!isSaveModalOpen || !canvasRef.current) return;
+    let isActive = true;
+    setIsGeneratingBlob(true);
+
+    const canvas = canvasRef.current;
+    generateOptimizedBlob(canvas, effectiveMimeType, fileInfo?.size)
+      .then((blob) => {
+        if (isActive && blob) {
+          setOptimizedBlob(blob);
+          setEstimatedSize(blob.size);
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsGeneratingBlob(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [isSaveModalOpen, effectiveMimeType, fileInfo?.size, generateOptimizedBlob]);
+
+  const handleDownload = async () => {
     if (!isConfirmed) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    let blobToDownload = optimizedBlob;
+    if (!blobToDownload) {
+      blobToDownload = await generateOptimizedBlob(canvas, effectiveMimeType, fileInfo?.size);
+    }
+    if (!blobToDownload) return;
+
+    // 원본 파일명을 보존한 다운로드 파일명 생성
+    let baseName = 'student-privacy-blur';
+    if (fileInfo?.name) {
+      baseName = fileInfo.name.replace(/\.[^/.]+$/, '');
+    }
+    const downloadFileName = `${baseName}_blur.${effectiveExt}`;
+
+    const url = URL.createObjectURL(blobToDownload);
     const link = document.createElement('a');
-    link.download = `student-privacy-blur-${Date.now()}.png`;
-    link.href = canvas.toDataURL('image/png');
+    link.download = downloadFileName;
+    link.href = url;
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
+
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 1000);
+
     setIsSaveModalOpen(false);
     setIsConfirmed(false);
   };
@@ -385,7 +499,10 @@ const Editor: React.FC<EditorProps> = ({
           <svg className="w-6 h-6 group-hover:bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
-          저장하기 (PNG)
+          <span className="text-base">저장하기</span>
+          <span className="text-xs bg-green-700/60 px-2.5 py-0.5 rounded-full font-medium">
+            {effectiveExt.toUpperCase()} · 원본용량 유지
+          </span>
         </button>
       </div>
 
@@ -397,6 +514,73 @@ const Editor: React.FC<EditorProps> = ({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
               <h3 className="text-xl font-bold">사용 전 주의사항</h3>
+            </div>
+
+            {/* 용량 최적화 안내 및 비교 카드 */}
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">용량 최적화 저장</span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+                  <svg className="w-3.5 h-3.5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                  원본 용량 유지 적용
+                </span>
+              </div>
+
+              {/* 용량 비교 박스 */}
+              <div className="grid grid-cols-2 gap-3 mb-3 bg-white p-3 rounded-xl border border-gray-100 shadow-xs">
+                <div>
+                  <div className="text-[11px] text-gray-400 font-medium mb-0.5">원본 파일 크기</div>
+                  <div className="text-sm font-bold text-gray-800">
+                    {fileInfo?.size ? formatBytes(fileInfo.size) : '확인 불가'}
+                    <span className="text-xs text-gray-500 font-normal ml-1">({originalFormatKey.toUpperCase()})</span>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[11px] text-gray-400 font-medium mb-0.5">저장 예정 크기</div>
+                  <div className="text-sm font-bold text-blue-600">
+                    {isGeneratingBlob ? (
+                      <span className="text-xs text-gray-400 animate-pulse">최적화 계산 중...</span>
+                    ) : estimatedSize ? (
+                      <>
+                        {formatBytes(estimatedSize)}
+                        <span className="text-xs text-gray-500 font-normal ml-1">({effectiveExt.toUpperCase()})</span>
+                      </>
+                    ) : (
+                      '계산 중...'
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* 포맷 선택 버튼군 */}
+              <div className="flex items-center justify-between pt-2.5 border-t border-gray-200/60">
+                <span className="text-xs text-gray-600 font-medium">저장 포맷</span>
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFormat('original')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${selectedFormat === 'original' ? 'bg-blue-600 text-white shadow-sm' : 'bg-gray-200/70 text-gray-700 hover:bg-gray-300/70'}`}
+                  >
+                    원본유지 ({originalFormatKey.toUpperCase()})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFormat('jpeg')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${selectedFormat === 'jpeg' ? 'bg-blue-600 text-white shadow-sm' : 'bg-gray-200/70 text-gray-700 hover:bg-gray-300/70'}`}
+                  >
+                    JPG
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFormat('png')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${selectedFormat === 'png' ? 'bg-blue-600 text-white shadow-sm' : 'bg-gray-200/70 text-gray-700 hover:bg-gray-300/70'}`}
+                  >
+                    PNG
+                  </button>
+                </div>
+              </div>
             </div>
             
             <div className="bg-orange-50 border border-orange-100 rounded-2xl p-6 mb-8">

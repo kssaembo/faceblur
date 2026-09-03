@@ -16,3 +16,9 @@ export interface Point {
   x: number;
   y: number;
 }
+
+export interface ImageFileInfo {
+  name: string;
+  type: string;
+  size: number;
+}
